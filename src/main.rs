@@ -11,9 +11,9 @@ use bevy::render::{
 
 const BRUSH_ENABLED: bool = true; // DISABLE FOR BETTER PERFORMANCE SINCE THEN IT DOES NOT HAVE TO DO 360*BRUSH_THICKNESS ITERATIONS
 const BRUSH_THICKNESS: u32 = 3;
-
+const BRUSH_COLOR: Color = Color::linear_rgb(255.0, 255.0, 255.0);
 const BOARD_COLOR: Color = Color::linear_rgb(0.0, 0.0, 0.0);
-const DRAW_COLOR: Color = Color::linear_rgb(255.0, 255.0, 255.0);
+const RESAMPLE_TARGET_POINTS: usize = 128;
 
 #[derive(Resource)]
 struct DrawingBoard(Handle<Image>);
@@ -22,9 +22,7 @@ struct DrawingBoard(Handle<Image>);
 struct M1Held(bool);
 
 fn resample(total_length: f32, candidate_points: &Vec<Vec2>) -> Vec<Vec2> {
-    const TARGET_POINTS: usize = 128;
-
-    let mut resampled_points = Vec::with_capacity(TARGET_POINTS);
+    let mut resampled_points = Vec::with_capacity(RESAMPLE_TARGET_POINTS);
     resampled_points.push(candidate_points[0]);
 
     if candidate_points.len() > 1 {
@@ -33,7 +31,7 @@ fn resample(total_length: f32, candidate_points: &Vec<Vec2>) -> Vec<Vec2> {
          sqrting the alpha gives lesser points for some reason;
         */
 
-        let increment = total_length / (TARGET_POINTS) as f32;
+        let increment = total_length / (RESAMPLE_TARGET_POINTS) as f32;
         let mut accumulated_distance = 0.0;
         let mut previous_point = candidate_points[0];
 
@@ -42,7 +40,7 @@ fn resample(total_length: f32, candidate_points: &Vec<Vec2>) -> Vec<Vec2> {
             let mut segment_distance = previous_point.distance(current_point);
 
             while accumulated_distance + segment_distance >= increment
-                && resampled_points.len() < TARGET_POINTS
+                && resampled_points.len() < RESAMPLE_TARGET_POINTS
             {
                 let alpha = (increment - accumulated_distance) / segment_distance;
                 let new_point = previous_point.lerp(current_point, alpha);
@@ -90,7 +88,7 @@ fn rotate_about_centroid(resampled_points: &Vec<Vec2>) -> Vec<Vec2> {
     v
 }
 
-fn scale_and_translate(rotated_points: &Vec<Vec2>, size: f32, window_size: Vec2) -> Vec<Vec2> {
+fn scale_and_translate(rotated_points: &Vec<Vec2>, size: f32, window_size: Option<Vec2>) -> Vec<Vec2> {
     // GET BOUNDING BOX CO-ORDS
     let (mut min_x, mut min_y, mut max_x, mut max_y) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
     for point in rotated_points.iter() {
@@ -110,11 +108,18 @@ fn scale_and_translate(rotated_points: &Vec<Vec2>, size: f32, window_size: Vec2)
         scaled_points.push(Vec2::new(scaled_x, scaled_y));
     }   
 
-    // TRANSLATE TO ORIGIN
+    // TRANSLATE TO ORIGIN (offset is for debugging purposes)
+    let mut offset_x = 0.0;
+    let mut offset_y = 0.0;
+    if let Some(o) = window_size {
+        offset_x = o.x/2.0;
+        offset_y = o.y/2.0;
+    }
+
     let centroid = get_centroid(&scaled_points);
     for i in 0..scaled_points.len() {
-        scaled_points[i].x += -centroid.x + (window_size.x/2.0);
-        scaled_points[i].y += -centroid.y + (window_size.y/2.0);
+        scaled_points[i].x += -centroid.x + offset_x;
+        scaled_points[i].y += -centroid.y + offset_y;
     }
     scaled_points
 }
@@ -187,10 +192,10 @@ fn draw(
 
                 let resampled_points = resample(*total_length, &candidate_points);
                 let rotated_points = rotate_about_centroid(&resampled_points);
-                let scaled_points = scale_and_translate(&rotated_points, 100.0, window.size());
+                let scaled_points = scale_and_translate(&rotated_points, 100.0, None);
 
                 for point in scaled_points.iter() {
-                    board.set_color_at(point.x as u32, point.y as u32, DRAW_COLOR).unwrap();
+                    board.set_color_at(point.x as u32, point.y as u32, BRUSH_COLOR).unwrap();
                 }
             }
 
@@ -209,13 +214,13 @@ fn draw(
                             let x_e = vec.x + (delta_r as f32) * ops::cos((theta as f32).to_radians());
                             let y_e = vec.y + (delta_r as f32) * ops::sin((theta as f32).to_radians());
                             board
-                                .set_color_at(x_e as u32, y_e as u32, DRAW_COLOR)
+                                .set_color_at(x_e as u32, y_e as u32, BRUSH_COLOR)
                                 .unwrap_or(()); // most likely the error would be an out_of_bounds so it i think im okay to ignore
                         }
                     }
                 } else {
                     board
-                        .set_color_at(vec.x as u32, vec.y as u32, DRAW_COLOR)
+                        .set_color_at(vec.x as u32, vec.y as u32, BRUSH_COLOR)
                         .unwrap_or(()); // most likely the error would be an out_of_bounds so it i think im okay to ignore
                 }
             };
