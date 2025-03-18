@@ -1,3 +1,5 @@
+use std::f32::consts::PI;
+
 use bevy::dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin};
 use bevy::input::mouse::{AccumulatedMouseMotion, MouseButtonInput};
 use bevy::prelude::*;
@@ -59,19 +61,31 @@ fn resample(total_length: f32, candidate_points: &Vec<Vec2>) -> Vec<Vec2> {
     resampled_points
 }
 
-fn reset_board(window_size: Vec2, board: &mut Image, resize: bool) {
-    for x in 0..(window_size.x as u32) {
-        for y in 0..(window_size.y as u32) {
-            board.set_color_at(x, y, BOARD_COLOR).unwrap_or(());
-        }
-    }
+fn get_centroid(resampled_points: &Vec<Vec2>) -> Vec2 {
+    let mut sum_x = 0.0;
+    let mut sum_y = 0.0;
+    for point in resampled_points.iter() {
+        sum_x += point.x;
+        sum_y += point.y;
+    }   
+    sum_x /= resampled_points.len() as f32;
+    sum_y /= resampled_points.len() as f32;
+    Vec2::new(sum_x, sum_y)
+}
 
+fn reset_board(window_size: Vec2, board: &mut Image, resize: bool) {
     if resize {
         board.resize(Extent3d {
             width: window_size.x as u32,
             height: window_size.y as u32,
             depth_or_array_layers: 1,
         });
+    }
+
+    for x in 0..(window_size.x as u32) {
+        for y in 0..(window_size.y as u32) {
+            board.set_color_at(x, y, BOARD_COLOR).unwrap_or(());
+        }
     }
 }
 
@@ -126,13 +140,21 @@ fn draw(
                 reset_board(window.size(), board, false);
 
                 let resampled_points = resample(*total_length, &candidate_points);
-                for point in resampled_points.iter() {
+                println!("Resampled points count: {}", resampled_points.len());
+                
+                let c = get_centroid(&resampled_points);
+                let indicative_angle = ops::atan2(c.y - resampled_points[0].y, c.x - resampled_points[0].x) + PI;
+                // rotation of a point about origin formula was x = x'cosx + y'sinx and for y you add pi/2
+                for (i,p) in resampled_points.iter().enumerate() {
+                    let x_ = p.x - c.x;
+                    let y_ = p.y - c.y;
+                    let x = x_*ops::cos(indicative_angle) + y_*ops::sin(indicative_angle) + c.x;
+                    let y = y_*ops::cos(indicative_angle) - x_*ops::sin(indicative_angle) + c.y;
+                
                     board
-                        .set_color_at(point.x as u32, point.y as u32, DRAW_COLOR)
+                        .set_color_at(x as u32, y as u32, if i == 0 { Color::linear_rgb(255.0, 0.0, 0.0)} else { DRAW_COLOR })
                         .unwrap_or(());
                 }
-
-                println!("Resampled points count: {}", resampled_points.len());
             }
 
             *m1held = M1Held(button_event.state.is_pressed());
