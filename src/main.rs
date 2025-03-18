@@ -18,6 +18,63 @@ struct DrawingBoard(Handle<Image>);
 #[derive(Default)]
 struct M1Held(bool);
 
+fn resample(total_length: f32, candidate_points: &Vec<Vec2>) -> Vec<Vec2> {
+    const TARGET_POINTS: usize = 128;
+
+    let mut resampled_points = Vec::with_capacity(TARGET_POINTS);
+    resampled_points.push(candidate_points[0]);
+
+    if candidate_points.len() > 1 {
+        /*
+         distance squared would be faster but using it leads to inaccuracies with the lerping and alpha;
+         sqrting the alpha gives lesser points for some reason;
+        */
+
+        let increment = total_length / (TARGET_POINTS) as f32;
+        let mut accumulated_distance = 0.0;
+        let mut previous_point = candidate_points[0];
+
+        for i in 1..candidate_points.len() {
+            let current_point = candidate_points[i];
+            let mut segment_distance = previous_point.distance(current_point);
+
+            while accumulated_distance + segment_distance >= increment
+                && resampled_points.len() < TARGET_POINTS
+            {
+                let alpha = (increment - accumulated_distance) / segment_distance;
+                let new_point = previous_point.lerp(current_point, alpha);
+
+                resampled_points.push(new_point);
+
+                previous_point = new_point;
+                accumulated_distance = 0.0;
+                segment_distance = previous_point.distance(current_point);
+            }
+
+            accumulated_distance += segment_distance;
+            previous_point = current_point;
+        }
+    }
+
+    resampled_points
+}
+
+fn reset_board(window_size: Vec2, board: &mut Image, resize: bool) {
+    for x in 0..(window_size.x as u32) {
+        for y in 0..(window_size.y as u32) {
+            board.set_color_at(x, y, BOARD_COLOR).unwrap_or(());
+        }
+    }
+
+    if resize {
+        board.resize(Extent3d {
+            width: window_size.x as u32,
+            height: window_size.y as u32,
+            depth_or_array_layers: 1,
+        });
+    }
+}
+
 fn main() {
     App::new()
         .add_plugins((
@@ -56,85 +113,26 @@ fn draw(
     for button_event in button_events.read() {
         if button_event.button == MouseButton::Left {
             if m1held.0 == false && button_event.state.is_pressed() == true {
+                // started drawing so clear stuff
                 candidate_points.clear();
                 *total_length = 0.0;
                 *previous_pos = Vec2::ZERO;
 
-                // re-initialize the board: resize incase window size changed and clear old drawing
                 let board = images.get_mut(&drawingboard.0).expect("Board not found!!");
-                board.resize(Extent3d {
-                    width: window.size().x as u32,
-                    height: window.size().y as u32,
-                    depth_or_array_layers: 1,
-                });
-
-                for x in 0..(window.size().x as u32) {
-                    for y in 0..(window.size().y as u32) {
-                        board.set_color_at(x, y, BOARD_COLOR).unwrap_or(());
-                    }
-                }
+                reset_board(window.size(), board, true);
             } else if m1held.0 == true && button_event.state.is_pressed() == false {
-                // RESAMPLING
+                // stopped drawing
                 let board = images.get_mut(&drawingboard.0).expect("Board not found!!");
-                for x in 0..(window.size().x as u32) {
-                    for y in 0..(window.size().y as u32) {
-                        board.set_color_at(x, y, BOARD_COLOR).unwrap_or(());
-                    }
-                }
+                reset_board(window.size(), board, false);
 
-                const TARGET_POINTS: usize = 128;
-
-                let mut resampled_points = Vec::with_capacity(TARGET_POINTS);
-                resampled_points.push(candidate_points[0]);
-
-                if candidate_points.len() > 1 {
-                    /*
-                     distance squared would be faster but using it leads to inaccuracies with the lerping and alpha;
-                     sqrting the alpha gives lesser points for some reason;
-                    */
-        
-                    let increment = *total_length / (TARGET_POINTS) as f32;
-                    let mut accumulated_distance = 0.0;
-                    let mut previous_point = candidate_points[0];
-
-                    for i in 1..candidate_points.len() {
-                        let current_point = candidate_points[i];
-                        let mut segment_distance = previous_point.distance(current_point);
-
-                        while accumulated_distance + segment_distance >= increment
-                            && resampled_points.len() < TARGET_POINTS
-                        {
-                            let alpha = (increment - accumulated_distance) / segment_distance;
-                            let new_point = previous_point.lerp(current_point, alpha);
-
-                            resampled_points.push(new_point);
-
-                            previous_point = new_point;
-                            accumulated_distance = 0.0;
-                            segment_distance = previous_point.distance(current_point);
-                        }
-
-                        accumulated_distance += segment_distance;
-                        previous_point = current_point;
-                    }
-                }
-
-                for (i, point) in resampled_points.iter().enumerate() {
-                    let is_endpoint = i == 0 || i == resampled_points.len() - 1;
+                let resampled_points = resample(*total_length, &candidate_points);
+                for point in resampled_points.iter() {
                     board
-                        .set_color_at(
-                            point.x as u32,
-                            point.y as u32,
-                            if is_endpoint {
-                                Color::linear_rgb(255.0, 0.0, 0.0)
-                            } else {
-                                DRAW_COLOR
-                            },
-                        )
+                        .set_color_at(point.x as u32, point.y as u32, DRAW_COLOR)
                         .unwrap_or(());
                 }
 
-                println!("Points count: {}", resampled_points.len());
+                println!("Resampled points count: {}", resampled_points.len());
             }
 
             *m1held = M1Held(button_event.state.is_pressed());
@@ -165,9 +163,9 @@ fn draw(
 
             if mouse_delta.delta.length_squared() > 36.0 && *previous_pos != Vec2::ZERO {
                 let d = previous_pos.distance(mouse_pos);
-                let num_steps = (d/BRUSH_THICKNESS as f32).ceil() as u32; 
+                let num_steps = (d / BRUSH_THICKNESS as f32).ceil() as u32;
                 for step in 0..=num_steps {
-                    let alpha = step as f32/ num_steps as f32;
+                    let alpha = step as f32 / num_steps as f32;
                     let dv = previous_pos.lerp(mouse_pos, alpha);
                     fill_pixel(dv);
                 }
@@ -176,7 +174,7 @@ fn draw(
                 fill_pixel(mouse_pos);
                 if *previous_pos != Vec2::ZERO {
                     *total_length += previous_pos.distance(mouse_pos);
-                } 
+                }
             }
 
             candidate_points.push(mouse_pos);
