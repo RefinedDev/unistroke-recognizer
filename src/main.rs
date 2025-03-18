@@ -1,3 +1,4 @@
+use core::f32;
 use std::f32::consts::PI;
 
 use bevy::dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin};
@@ -57,7 +58,7 @@ fn resample(total_length: f32, candidate_points: &Vec<Vec2>) -> Vec<Vec2> {
             previous_point = current_point;
         }
     }
-
+    println!("Resampled points count: {}", resampled_points.len());
     resampled_points
 }
 
@@ -71,6 +72,51 @@ fn get_centroid(resampled_points: &Vec<Vec2>) -> Vec2 {
     sum_x /= resampled_points.len() as f32;
     sum_y /= resampled_points.len() as f32;
     Vec2::new(sum_x, sum_y)
+}
+
+fn rotate_about_centroid(resampled_points: &Vec<Vec2>) -> Vec<Vec2> {
+    let mut v = Vec::with_capacity(resampled_points.len());
+    let centroid = get_centroid(&resampled_points);
+    let indicative_angle = ops::atan2(centroid.y - resampled_points[0].y, centroid.x - resampled_points[0].x) + PI;
+    // rotation of a point about origin formula was x = x'cosx + y'sinx and for y you add pi/2
+    for point in resampled_points.iter() {
+        let x_ = point.x - centroid.x;
+        let y_ = point.y - centroid.y;
+        let x = x_*ops::cos(indicative_angle) + y_*ops::sin(indicative_angle) + centroid.x;
+        let y = y_*ops::cos(indicative_angle) - x_*ops::sin(indicative_angle) + centroid.y;
+        v.push(Vec2::new(x,y));
+    }
+
+    v
+}
+
+fn scale_and_translate(rotated_points: &Vec<Vec2>, size: f32, window_size: Vec2) -> Vec<Vec2> {
+    // GET BOUNDING BOX CO-ORDS
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for point in rotated_points.iter() {
+        min_x = min_x.min(point.x);
+        min_y = min_y.min(point.y);
+        max_x = max_x.max(point.x);
+        max_y = max_y.max(point.y);
+    }
+    let b_width = max_x - min_x;
+    let b_height = max_y - min_y;
+
+    // SCALING (SCALING MESSES UP STRAIGHT LINES)
+    let mut scaled_points = Vec::with_capacity(rotated_points.len());
+    for point in rotated_points.iter() {
+        let scaled_x = point.x * (size / b_width);
+        let scaled_y = point.y * (size / b_height);
+        scaled_points.push(Vec2::new(scaled_x, scaled_y));
+    }   
+
+    // TRANSLATE TO ORIGIN
+    let centroid = get_centroid(&scaled_points);
+    for i in 0..scaled_points.len() {
+        scaled_points[i].x += -centroid.x + (window_size.x/2.0);
+        scaled_points[i].y += -centroid.y + (window_size.y/2.0);
+    }
+    scaled_points
 }
 
 fn reset_board(window_size: Vec2, board: &mut Image, resize: bool) {
@@ -140,20 +186,11 @@ fn draw(
                 reset_board(window.size(), board, false);
 
                 let resampled_points = resample(*total_length, &candidate_points);
-                println!("Resampled points count: {}", resampled_points.len());
-                
-                let c = get_centroid(&resampled_points);
-                let indicative_angle = ops::atan2(c.y - resampled_points[0].y, c.x - resampled_points[0].x) + PI;
-                // rotation of a point about origin formula was x = x'cosx + y'sinx and for y you add pi/2
-                for (i,p) in resampled_points.iter().enumerate() {
-                    let x_ = p.x - c.x;
-                    let y_ = p.y - c.y;
-                    let x = x_*ops::cos(indicative_angle) + y_*ops::sin(indicative_angle) + c.x;
-                    let y = y_*ops::cos(indicative_angle) - x_*ops::sin(indicative_angle) + c.y;
-                
-                    board
-                        .set_color_at(x as u32, y as u32, if i == 0 { Color::linear_rgb(255.0, 0.0, 0.0)} else { DRAW_COLOR })
-                        .unwrap_or(());
+                let rotated_points = rotate_about_centroid(&resampled_points);
+                let scaled_points = scale_and_translate(&rotated_points, 100.0, window.size());
+
+                for point in scaled_points.iter() {
+                    board.set_color_at(point.x as u32, point.y as u32, DRAW_COLOR).unwrap();
                 }
             }
 
