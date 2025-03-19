@@ -1,7 +1,6 @@
 mod unistrokes;
 use std::collections::HashMap;
 use std::f32::consts::PI;
-use std::sync::LazyLock;
 use std::time::Instant;
 
 use bevy::dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin};
@@ -11,6 +10,7 @@ use bevy::render::{
     render_asset::RenderAssetUsages,
     render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
+use bevy_simple_text_input::{TextInput, TextInputPlugin, TextInputSubmitEvent, TextInputTextFont};
 
 const BRUSH_ENABLED: bool = true; // DISABLE FOR BETTER PERFORMANCE SINCE THEN IT DOES NOT HAVE TO DO 360*BRUSH_THICKNESS ITERATIONS
 const BRUSH_THICKNESS: u32 = 3;
@@ -19,11 +19,16 @@ const BOARD_COLOR: Color = Color::linear_rgb(0.0, 0.0, 0.0);
 const RESAMPLE_TARGET_POINTS: usize = 64;
 const SCALE_SIZE: f32 = 100.0;
 
-static STROKE_TEMPLATES: LazyLock<HashMap<&'static str, Vec<Vec2>>> =
-    LazyLock::new(|| unistrokes::stroke_templates());
-
 #[derive(Resource)]
 struct DrawingBoard(Handle<Image>);
+
+#[derive(Resource)]
+struct IsTyping(bool);
+
+#[derive(Resource)]
+struct ResampledPoints(Vec<Vec2>);
+#[derive(Resource)]
+struct StrokeTemplates(HashMap<String, Vec<Vec2>>);
 
 #[derive(Component)]
 struct ResultText;
@@ -120,10 +125,11 @@ fn scale_and_translate(points: &mut Vec<Vec2>, size: f32) {
     }
 }
 
-fn recognize(points: &Vec<Vec2>) -> (&'static str, f32) {
+fn recognize(points: &Vec<Vec2>, templates: Res<StrokeTemplates>) -> (String, f32) {
     let mut nearest_distance_squared = f32::MAX;
     let mut nearest_name = "not recognized";
-    for template in STROKE_TEMPLATES.iter() {
+    
+    for template in templates.0.iter() {
         let distance = distance_at_best_angle(points, template.1);
         if distance < nearest_distance_squared {
             nearest_distance_squared = distance;
@@ -131,7 +137,7 @@ fn recognize(points: &Vec<Vec2>) -> (&'static str, f32) {
         }
     }
 
-    (nearest_name, nearest_distance_squared)
+    (nearest_name.to_string(), nearest_distance_squared)
 }
 
 fn distance_at_best_angle(points: &Vec<Vec2>, template_points: &Vec<Vec2>) -> f32 {
@@ -205,6 +211,7 @@ fn main() {
     App::new()
         .add_plugins((
             DefaultPlugins,
+            TextInputPlugin,
             FpsOverlayPlugin {
                 config: FpsOverlayConfig {
                     text_config: TextFont {
@@ -217,9 +224,66 @@ fn main() {
             },
         ))
         .add_systems(Startup, (setup_window, spawn))
-        .add_systems(Update, draw)
+        .add_systems(
+            Update,
+            (draw, handle_adding_gestures, textbox_input_listener).chain(),
+        )
+        .insert_resource(IsTyping(false))
+        .insert_resource(ResampledPoints(Vec::new()))
+        .insert_resource(StrokeTemplates(unistrokes::stroke_templates()))
         // .insert_resource(M1Held(false))
         .run();
+}
+
+fn handle_adding_gestures(
+    mut commands: Commands,
+    mut typing: ResMut<IsTyping>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    result_text: Single<&Text, With<ResultText>>,
+) {
+    if keyboard_input.just_pressed(KeyCode::Space) && !result_text.0.is_empty() && !typing.0 {
+        typing.0 = true;
+        commands
+            .spawn(Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                bottom: Val::Px(300.0),
+                ..default()
+            })
+            .with_children(|parent| {
+                parent.spawn((
+                    Node {
+                        width: Val::Px(200.0),
+                        border: UiRect::all(Val::Px(5.0)),
+                        padding: UiRect::all(Val::Px(5.0)),
+                        ..default()
+                    },
+                    BorderColor(BRUSH_COLOR),
+                    TextInput,
+                    TextInputTextFont(TextFont {
+                        font_size: 34.,
+                        ..default()
+                    }),
+                ));
+            });
+    }
+}
+
+fn textbox_input_listener(
+    mut events: EventReader<TextInputSubmitEvent>,
+    mut typing: ResMut<IsTyping>,
+    mut commands: Commands,
+    resampled_points: Res<ResampledPoints>,
+    mut custom_templates: ResMut<StrokeTemplates>,
+) {
+    for event in events.read() {
+        let text = &event.value;
+        custom_templates.0.insert(text.clone(), resampled_points.0.clone());
+        typing.0 = false;
+        commands.entity(event.entity).despawn();
+    }
 }
 
 fn draw(
@@ -229,6 +293,9 @@ fn draw(
 
     window: Single<&Window>,
 
+    is_typing: Res<IsTyping>,
+    custom_templates: Res<StrokeTemplates>,
+    mut final_resampled_points: ResMut<ResampledPoints>,
     mut previous_pos: Local<Vec2>,
     mut m1held: Local<M1Held>,
     mut candidate_points: Local<Vec<Vec2>>,
@@ -237,6 +304,9 @@ fn draw(
     mouse_delta: Res<AccumulatedMouseMotion>,
     mut button_events: EventReader<MouseButtonInput>,
 ) {
+    if is_typing.0 {
+        return;
+    }
     for button_event in button_events.read() {
         if button_event.button == MouseButton::Left {
             if m1held.0 == false && button_event.state.is_pressed() == true {
@@ -256,10 +326,16 @@ fn draw(
                 rotate_about_centroid(&mut resampled_points);
                 scale_and_translate(&mut resampled_points, SCALE_SIZE);
 
-                let (shape, _least_path_squared) = recognize(&resampled_points);
+                let (shape, _least_path_squared) = recognize(&resampled_points, custom_templates);
 
                 let elapsed_time = now.elapsed();
-                result_text.0 = format!("{}\n{}.{} milliseconds", shape, elapsed_time.as_millis(), elapsed_time.as_micros());
+                result_text.0 = format!(
+                    "{}\n{}.{} milliseconds",
+                    shape,
+                    elapsed_time.as_millis(),
+                    elapsed_time.as_micros()
+                );
+                final_resampled_points.0 = resampled_points;
             }
 
             *m1held = M1Held(button_event.state.is_pressed());
@@ -328,7 +404,9 @@ fn spawn(window: Single<&Window>, mut commands: Commands, mut images: ResMut<Ass
         ResultText,
     ));
     commands.spawn((
-        Text::new("Make strokes on the canvas\nMisrecognized? Press SPACE to add unistroke as a gesture"),
+        Text::new(
+            "Make strokes on the canvas\nMisrecognized? Press SPACE to add unistroke as a gesture",
+        ),
         TextFont {
             font_size: 20.0,
             ..default()
