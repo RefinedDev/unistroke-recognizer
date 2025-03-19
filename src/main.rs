@@ -99,7 +99,7 @@ fn rotate_about_centroid(points: &mut Vec<Vec2>) {
     }
 }
 
-fn scale_and_translate(points: &mut Vec<Vec2>, size: f32) {
+fn scale_and_translate(points: &mut Vec<Vec2>) {
     // GET BOUNDING BOX CO-ORDS
     let (mut min_x, mut min_y, mut max_x, mut max_y) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
     for point in points.iter() {
@@ -113,8 +113,8 @@ fn scale_and_translate(points: &mut Vec<Vec2>, size: f32) {
 
     // SCALING (SCALING MESSES UP STRAIGHT LINES)
     for point in points.iter_mut() {
-        point.x = point.x * (size / b_width);
-        point.y = point.y * (size / b_height);
+        point.x = point.x * (SCALE_SIZE / b_width);
+        point.y = point.y * (SCALE_SIZE / b_height);
     }
 
     // TRANSLATE TO ORIGIN (offset is for debugging purposes)
@@ -277,12 +277,19 @@ fn textbox_input_listener(
     mut commands: Commands,
     resampled_points: Res<ResampledPoints>,
     mut custom_templates: ResMut<StrokeTemplates>,
+    mut result_text: Single<&mut Text, With<ResultText>>,
 ) {
     for event in events.read() {
         let text = &event.value;
-        custom_templates.0.insert(text.clone(), resampled_points.0.clone());
-        typing.0 = false;
-        commands.entity(event.entity).despawn();
+
+        if let Some(_) = custom_templates.0.get(text) {
+            result_text.0 = format!("{} gesture already exists!", text);
+        } else {
+            result_text.0 = format!("{} gesture added!", text);
+            custom_templates.0.insert(text.clone(), resampled_points.0.clone());
+            typing.0 = false;
+            commands.entity(event.entity).despawn();
+        }
     }
 }
 
@@ -324,7 +331,7 @@ fn draw(
 
                 let mut resampled_points = resample(*total_length, &candidate_points);
                 rotate_about_centroid(&mut resampled_points);
-                scale_and_translate(&mut resampled_points, SCALE_SIZE);
+                scale_and_translate(&mut resampled_points);
 
                 let (shape, _least_path_squared) = recognize(&resampled_points, custom_templates);
 
