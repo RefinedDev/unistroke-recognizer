@@ -1,5 +1,8 @@
-use core::f32;
+mod unistrokes;
+use std::collections::HashMap;
 use std::f32::consts::PI;
+use std::sync::LazyLock;
+use std::time::Instant;
 
 use bevy::dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin};
 use bevy::input::mouse::{AccumulatedMouseMotion, MouseButtonInput};
@@ -13,7 +16,12 @@ const BRUSH_ENABLED: bool = true; // DISABLE FOR BETTER PERFORMANCE SINCE THEN I
 const BRUSH_THICKNESS: u32 = 3;
 const BRUSH_COLOR: Color = Color::linear_rgb(255.0, 255.0, 255.0);
 const BOARD_COLOR: Color = Color::linear_rgb(0.0, 0.0, 0.0);
-const RESAMPLE_TARGET_POINTS: usize = 128;
+const RESAMPLE_TARGET_POINTS: usize = 64;
+const SCALE_SIZE: f32 = 100.0;
+
+static STROKE_TEMPLATES: LazyLock<HashMap<&'static str, Vec<Vec2>>> = LazyLock::new(|| {
+    unistrokes::stroke_templates()
+});
 
 #[derive(Resource)]
 struct DrawingBoard(Handle<Image>);
@@ -56,42 +64,38 @@ fn resample(total_length: f32, candidate_points: &Vec<Vec2>) -> Vec<Vec2> {
             previous_point = current_point;
         }
     }
-    println!("Resampled points count: {}", resampled_points.len());
+
     resampled_points
 }
 
-fn get_centroid(resampled_points: &Vec<Vec2>) -> Vec2 {
+fn get_centroid(points: &Vec<Vec2>) -> Vec2 {
     let mut sum_x = 0.0;
     let mut sum_y = 0.0;
-    for point in resampled_points.iter() {
+    for point in points.iter() {
         sum_x += point.x;
         sum_y += point.y;
     }   
-    sum_x /= resampled_points.len() as f32;
-    sum_y /= resampled_points.len() as f32;
+    sum_x /= points.len() as f32;
+    sum_y /= points.len() as f32;
     Vec2::new(sum_x, sum_y)
 }
 
-fn rotate_about_centroid(resampled_points: &Vec<Vec2>) -> Vec<Vec2> {
-    let mut v = Vec::with_capacity(resampled_points.len());
-    let centroid = get_centroid(&resampled_points);
-    let indicative_angle = ops::atan2(centroid.y - resampled_points[0].y, centroid.x - resampled_points[0].x) + PI;
+fn rotate_about_centroid(points: &mut Vec<Vec2>) {
+    let centroid = get_centroid(&points);
+    let indicative_angle = ops::atan2(centroid.y - points[0].y, centroid.x - points[0].x) + PI;
     // rotation of a point about origin formula was x = x'cosx + y'sinx and for y you add pi/2
-    for point in resampled_points.iter() {
+    for point in points.iter_mut() {
         let x_ = point.x - centroid.x;
         let y_ = point.y - centroid.y;
-        let x = x_*ops::cos(indicative_angle) + y_*ops::sin(indicative_angle) + centroid.x;
-        let y = y_*ops::cos(indicative_angle) - x_*ops::sin(indicative_angle) + centroid.y;
-        v.push(Vec2::new(x,y));
+        point.x = x_*ops::cos(indicative_angle) + y_*ops::sin(indicative_angle) + centroid.x;
+        point.y = y_*ops::cos(indicative_angle) - x_*ops::sin(indicative_angle) + centroid.y;
     }
-
-    v
 }
 
-fn scale_and_translate(rotated_points: &Vec<Vec2>, size: f32, window_size: Option<Vec2>) -> Vec<Vec2> {
+fn scale_and_translate(points: &mut Vec<Vec2>, size: f32) {
     // GET BOUNDING BOX CO-ORDS
     let (mut min_x, mut min_y, mut max_x, mut max_y) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-    for point in rotated_points.iter() {
+    for point in points.iter() {
         min_x = min_x.min(point.x);
         min_y = min_y.min(point.y);
         max_x = max_x.max(point.x);
@@ -101,27 +105,82 @@ fn scale_and_translate(rotated_points: &Vec<Vec2>, size: f32, window_size: Optio
     let b_height = max_y - min_y;
 
     // SCALING (SCALING MESSES UP STRAIGHT LINES)
-    let mut scaled_points = Vec::with_capacity(rotated_points.len());
-    for point in rotated_points.iter() {
-        let scaled_x = point.x * (size / b_width);
-        let scaled_y = point.y * (size / b_height);
-        scaled_points.push(Vec2::new(scaled_x, scaled_y));
+    for point in points.iter_mut() {
+        point.x = point.x * (size / b_width);
+        point.y = point.y * (size / b_height);
     }   
 
     // TRANSLATE TO ORIGIN (offset is for debugging purposes)
-    let mut offset_x = 0.0;
-    let mut offset_y = 0.0;
-    if let Some(o) = window_size {
-        offset_x = o.x/2.0;
-        offset_y = o.y/2.0;
+    let centroid = get_centroid(points);
+    for point in points.iter_mut() {
+        point.x += -centroid.x;
+        point.y += -centroid.y;
+    }
+}
+
+fn recognize(points: &Vec<Vec2>) -> (&'static str, f32) {
+    let mut nearest_distance_squared = f32::MAX;
+    let mut nearest_name = "not recognized";
+    for template in STROKE_TEMPLATES.iter() {
+        let distance = distance_at_best_angle(points, template.1);
+        if distance < nearest_distance_squared {
+            nearest_distance_squared = distance;
+            nearest_name = template.0;
+        }
     }
 
-    let centroid = get_centroid(&scaled_points);
-    for i in 0..scaled_points.len() {
-        scaled_points[i].x += -centroid.x + offset_x;
-        scaled_points[i].y += -centroid.y + offset_y;
+    (nearest_name, nearest_distance_squared)
+}
+
+fn distance_at_best_angle(points: &Vec<Vec2>, template_points: &Vec<Vec2>) -> f32 {
+    // follows the golden-section search algorithm
+    const DELTA_THETA: f32 = 0.03490658503; // 2 deg in rads
+    const INVERSE_PHI: f32 = 0.61803398875;
+
+    let mut theta_max = 0.78539816339; // 45 deg in rads
+    let mut theta_min = -0.78539816339; // 45 deg in rads
+    let mut x1 = INVERSE_PHI*theta_min + (1.0 - INVERSE_PHI)*theta_max;
+    let mut f1 = distance_at_angle(points, template_points, x1);
+    let mut x2 = (1.0 - INVERSE_PHI)*theta_min + INVERSE_PHI*theta_max;
+    let mut f2 = distance_at_angle(points, template_points, x2);
+
+    while (theta_max - theta_min).abs() > DELTA_THETA {
+        if f1 < f2 {
+            theta_max = x2;
+            x2 = x1;
+            f2 = f1;
+            x1 = INVERSE_PHI*theta_min + (1.0-INVERSE_PHI)*theta_max;
+            f1 = distance_at_angle(points, template_points, x1)
+        } else {
+            theta_min = x1; 
+            x1 = x2;
+            f1 = f2;
+            x2 = (1.0 - INVERSE_PHI)*theta_min + INVERSE_PHI*theta_max;
+            f2 = distance_at_angle(points, template_points, x2)
+        }
     }
-    scaled_points
+
+    f32::min(f1, f2)
+}
+
+fn distance_at_angle(points: &Vec<Vec2>, template_points: &Vec<Vec2>, theta: f32) -> f32 {
+    let mut rotated_points = Vec::with_capacity(points.len());
+    let centroid = get_centroid(points);   
+    for point in points.iter() {
+        let x_ = point.x - centroid.x;
+        let y_ = point.y - centroid.y;
+        rotated_points.push(Vec2::new(
+            x_*ops::cos(theta) + y_*ops::sin(theta) + centroid.x,
+            y_*ops::cos(theta) - x_*ops::sin(theta) + centroid.y
+        ));
+    }
+    let mut path_distance = 0.0;
+    for index in 0..points.len() {
+        // squared distance is quicker; dont really care about score
+        let d = rotated_points[index].distance_squared(template_points[index]);
+        path_distance += d;
+    }
+    path_distance / (points.len() as f32).powi(2)
 }
 
 fn reset_board(window_size: Vec2, board: &mut Image, resize: bool) {
@@ -187,16 +246,16 @@ fn draw(
                 reset_board(window.size(), board, true);
             } else if m1held.0 == true && button_event.state.is_pressed() == false {
                 // stopped drawing
-                let board = images.get_mut(&drawingboard.0).expect("Board not found!!");
-                reset_board(window.size(), board, false);
+                let now = Instant::now();
 
-                let resampled_points = resample(*total_length, &candidate_points);
-                let rotated_points = rotate_about_centroid(&resampled_points);
-                let scaled_points = scale_and_translate(&rotated_points, 100.0, None);
+                let mut resampled_points = resample(*total_length, &candidate_points);
+                rotate_about_centroid(&mut resampled_points);
+                scale_and_translate(&mut resampled_points, SCALE_SIZE);
 
-                for point in scaled_points.iter() {
-                    board.set_color_at(point.x as u32, point.y as u32, BRUSH_COLOR).unwrap();
-                }
+                let (shape, _least_path_squared) = recognize(&resampled_points);
+
+                let elapsed_time = now.elapsed();
+                println!("{}: in {} milliseconds", shape, elapsed_time.as_millis());
             }
 
             *m1held = M1Held(button_event.state.is_pressed());
