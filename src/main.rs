@@ -19,12 +19,14 @@ const BOARD_COLOR: Color = Color::linear_rgb(0.0, 0.0, 0.0);
 const RESAMPLE_TARGET_POINTS: usize = 64;
 const SCALE_SIZE: f32 = 100.0;
 
-static STROKE_TEMPLATES: LazyLock<HashMap<&'static str, Vec<Vec2>>> = LazyLock::new(|| {
-    unistrokes::stroke_templates()
-});
+static STROKE_TEMPLATES: LazyLock<HashMap<&'static str, Vec<Vec2>>> =
+    LazyLock::new(|| unistrokes::stroke_templates());
 
 #[derive(Resource)]
 struct DrawingBoard(Handle<Image>);
+
+#[derive(Component)]
+struct ResultText;
 
 #[derive(Default)]
 struct M1Held(bool);
@@ -74,7 +76,7 @@ fn get_centroid(points: &Vec<Vec2>) -> Vec2 {
     for point in points.iter() {
         sum_x += point.x;
         sum_y += point.y;
-    }   
+    }
     sum_x /= points.len() as f32;
     sum_y /= points.len() as f32;
     Vec2::new(sum_x, sum_y)
@@ -87,8 +89,8 @@ fn rotate_about_centroid(points: &mut Vec<Vec2>) {
     for point in points.iter_mut() {
         let x_ = point.x - centroid.x;
         let y_ = point.y - centroid.y;
-        point.x = x_*ops::cos(indicative_angle) + y_*ops::sin(indicative_angle) + centroid.x;
-        point.y = y_*ops::cos(indicative_angle) - x_*ops::sin(indicative_angle) + centroid.y;
+        point.x = x_ * ops::cos(indicative_angle) + y_ * ops::sin(indicative_angle) + centroid.x;
+        point.y = y_ * ops::cos(indicative_angle) - x_ * ops::sin(indicative_angle) + centroid.y;
     }
 }
 
@@ -108,7 +110,7 @@ fn scale_and_translate(points: &mut Vec<Vec2>, size: f32) {
     for point in points.iter_mut() {
         point.x = point.x * (size / b_width);
         point.y = point.y * (size / b_height);
-    }   
+    }
 
     // TRANSLATE TO ORIGIN (offset is for debugging purposes)
     let centroid = get_centroid(points);
@@ -139,9 +141,9 @@ fn distance_at_best_angle(points: &Vec<Vec2>, template_points: &Vec<Vec2>) -> f3
 
     let mut theta_max = 0.78539816339; // 45 deg in rads
     let mut theta_min = -0.78539816339; // 45 deg in rads
-    let mut x1 = INVERSE_PHI*theta_min + (1.0 - INVERSE_PHI)*theta_max;
+    let mut x1 = INVERSE_PHI * theta_min + (1.0 - INVERSE_PHI) * theta_max;
     let mut f1 = distance_at_angle(points, template_points, x1);
-    let mut x2 = (1.0 - INVERSE_PHI)*theta_min + INVERSE_PHI*theta_max;
+    let mut x2 = (1.0 - INVERSE_PHI) * theta_min + INVERSE_PHI * theta_max;
     let mut f2 = distance_at_angle(points, template_points, x2);
 
     while (theta_max - theta_min).abs() > DELTA_THETA {
@@ -149,13 +151,13 @@ fn distance_at_best_angle(points: &Vec<Vec2>, template_points: &Vec<Vec2>) -> f3
             theta_max = x2;
             x2 = x1;
             f2 = f1;
-            x1 = INVERSE_PHI*theta_min + (1.0-INVERSE_PHI)*theta_max;
+            x1 = INVERSE_PHI * theta_min + (1.0 - INVERSE_PHI) * theta_max;
             f1 = distance_at_angle(points, template_points, x1)
         } else {
-            theta_min = x1; 
+            theta_min = x1;
             x1 = x2;
             f1 = f2;
-            x2 = (1.0 - INVERSE_PHI)*theta_min + INVERSE_PHI*theta_max;
+            x2 = (1.0 - INVERSE_PHI) * theta_min + INVERSE_PHI * theta_max;
             f2 = distance_at_angle(points, template_points, x2)
         }
     }
@@ -165,13 +167,13 @@ fn distance_at_best_angle(points: &Vec<Vec2>, template_points: &Vec<Vec2>) -> f3
 
 fn distance_at_angle(points: &Vec<Vec2>, template_points: &Vec<Vec2>, theta: f32) -> f32 {
     let mut rotated_points = Vec::with_capacity(points.len());
-    let centroid = get_centroid(points);   
+    let centroid = get_centroid(points);
     for point in points.iter() {
         let x_ = point.x - centroid.x;
         let y_ = point.y - centroid.y;
         rotated_points.push(Vec2::new(
-            x_*ops::cos(theta) + y_*ops::sin(theta) + centroid.x,
-            y_*ops::cos(theta) - x_*ops::sin(theta) + centroid.y
+            x_ * ops::cos(theta) + y_ * ops::sin(theta) + centroid.x,
+            y_ * ops::cos(theta) - x_ * ops::sin(theta) + centroid.y,
         ));
     }
     let mut path_distance = 0.0;
@@ -221,6 +223,7 @@ fn main() {
 }
 
 fn draw(
+    mut result_text: Single<&mut Text, With<ResultText>>,
     drawingboard: Res<DrawingBoard>,
     mut images: ResMut<Assets<Image>>,
 
@@ -241,6 +244,7 @@ fn draw(
                 candidate_points.clear();
                 *total_length = 0.0;
                 *previous_pos = Vec2::ZERO;
+                result_text.0 = "".to_string();
 
                 let board = images.get_mut(&drawingboard.0).expect("Board not found!!");
                 reset_board(window.size(), board, true);
@@ -255,7 +259,7 @@ fn draw(
                 let (shape, _least_path_squared) = recognize(&resampled_points);
 
                 let elapsed_time = now.elapsed();
-                println!("{}: in {} milliseconds", shape, elapsed_time.as_millis());
+                result_text.0 = format!("{}\n{}.{} milliseconds", shape, elapsed_time.as_millis(), elapsed_time.as_micros());
             }
 
             *m1held = M1Held(button_event.state.is_pressed());
@@ -270,8 +274,10 @@ fn draw(
                 if BRUSH_ENABLED {
                     for theta in 0..=360 {
                         for delta_r in 0..=BRUSH_THICKNESS {
-                            let x_e = vec.x + (delta_r as f32) * ops::cos((theta as f32).to_radians());
-                            let y_e = vec.y + (delta_r as f32) * ops::sin((theta as f32).to_radians());
+                            let x_e =
+                                vec.x + (delta_r as f32) * ops::cos((theta as f32).to_radians());
+                            let y_e =
+                                vec.y + (delta_r as f32) * ops::sin((theta as f32).to_radians());
                             board
                                 .set_color_at(x_e as u32, y_e as u32, BRUSH_COLOR)
                                 .unwrap_or(()); // most likely the error would be an out_of_bounds so it i think im okay to ignore
@@ -307,7 +313,33 @@ fn draw(
 }
 fn spawn(window: Single<&Window>, mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     commands.spawn(Camera2d);
-
+    commands.spawn((
+        Text::new(""),
+        TextFont {
+            font_size: 20.0,
+            ..default()
+        },
+        TextColor(Color::linear_rgb(0.0, 255.0, 0.0)),
+        Node {
+            position_type: PositionType::Absolute,
+            right: Val::Px(0.0),
+            ..default()
+        },
+        ResultText,
+    ));
+    commands.spawn((
+        Text::new("Make strokes on the canvas\nMisrecognized? Press SPACE to add unistroke as a gesture"),
+        TextFont {
+            font_size: 20.0,
+            ..default()
+        },
+        TextColor(Color::linear_rgb(0.0, 255.0, 0.0)),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(0.0),
+            ..default()
+        },
+    ));
     let image = Image::new_fill(
         Extent3d {
             width: window.size().x as u32,
