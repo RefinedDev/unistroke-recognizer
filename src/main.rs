@@ -1,4 +1,4 @@
-mod unistrokes;
+mod templates;
 use std::collections::HashMap;
 use std::f32::consts::PI;
 use std::time::Instant;
@@ -91,11 +91,13 @@ fn rotate_about_centroid(points: &mut Vec<Vec2>) {
     let centroid = get_centroid(&points);
     let indicative_angle = ops::atan2(centroid.y - points[0].y, centroid.x - points[0].x) + PI;
     // rotation of a point about origin formula was x = x'cosx + y'sinx and for y you add pi/2
+    let cos = ops::cos(indicative_angle);
+    let sin = ops::sin(indicative_angle);
     for point in points.iter_mut() {
         let x_ = point.x - centroid.x;
         let y_ = point.y - centroid.y;
-        point.x = x_ * ops::cos(indicative_angle) + y_ * ops::sin(indicative_angle) + centroid.x;
-        point.y = y_ * ops::cos(indicative_angle) - x_ * ops::sin(indicative_angle) + centroid.y;
+        point.x = x_ * cos + y_ * sin + centroid.x;
+        point.y = y_ * cos - x_ * sin + centroid.y;
     }
 }
 
@@ -174,12 +176,14 @@ fn distance_at_best_angle(points: &Vec<Vec2>, template_points: &Vec<Vec2>) -> f3
 fn distance_at_angle(points: &Vec<Vec2>, template_points: &Vec<Vec2>, theta: f32) -> f32 {
     let mut rotated_points = Vec::with_capacity(points.len());
     let centroid = get_centroid(points);
+    let cos = ops::cos(theta);
+    let sin = ops::sin(theta);
     for point in points.iter() {
         let x_ = point.x - centroid.x;
         let y_ = point.y - centroid.y;
         rotated_points.push(Vec2::new(
-            x_ * ops::cos(theta) + y_ * ops::sin(theta) + centroid.x,
-            y_ * ops::cos(theta) - x_ * ops::sin(theta) + centroid.y,
+            x_ * cos + y_ * sin + centroid.x,
+            y_ * cos - x_ * sin + centroid.y,
         ));
     }
     let mut path_distance = 0.0;
@@ -230,7 +234,7 @@ fn main() {
         )
         .insert_resource(IsTyping(false))
         .insert_resource(ResampledPoints(Vec::new()))
-        .insert_resource(StrokeTemplates(unistrokes::stroke_templates()))
+        .insert_resource(StrokeTemplates(templates::stroke_templates()))
         // .insert_resource(M1Held(false))
         .run();
 }
@@ -283,7 +287,7 @@ fn textbox_input_listener(
         let text = &event.value;
 
         if let Some(_) = custom_templates.0.get(text) {
-            result_text.0 = format!("{} gesture already exists!", text);
+            result_text.0 = format!("{} gesture already exists!\nI suggest adding a number as a suffix", text);
         } else {
             result_text.0 = format!("{} gesture added!", text);
             custom_templates.0.insert(text.clone(), resampled_points.0.clone());
