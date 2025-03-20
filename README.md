@@ -10,4 +10,4 @@ I will also code the more accurate [$P Point-Cloud Recognizer](https://depts.was
 
 # Default Templates
 
-https://depts.washington.edu/acelab/proj/dollar/unistrokes.gif
+<img align="center" width="300" src="default_templates.png" />
