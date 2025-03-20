@@ -357,17 +357,18 @@ fn draw(
 
     if m1held.0 {
         if let Some(mouse_pos) = window.cursor_position() {
-            let mut fill_pixel = |vec: Vec2| {
+            let mut fill_pixel = |vec: Vec2, first: bool| {
                 let board = images.get_mut(&drawingboard.0).expect("Board not found!!");
+                let thickness = if first { BRUSH_THICKNESS*2 } else { BRUSH_THICKNESS };
                 if BRUSH_ENABLED {
                     for theta in 0..=360 {
-                        for delta_r in 0..=BRUSH_THICKNESS {
-                            let x_e =
+                        for delta_r in 0..=thickness {
+                            let x =
                                 vec.x + (delta_r as f32) * ops::cos((theta as f32).to_radians());
-                            let y_e =
+                            let y =
                                 vec.y + (delta_r as f32) * ops::sin((theta as f32).to_radians());
                             board
-                                .set_color_at(x_e as u32, y_e as u32, BRUSH_COLOR)
+                                .set_color_at(x as u32, y as u32, BRUSH_COLOR)
                                 .unwrap_or(()); // most likely the error would be an out_of_bounds so it i think im okay to ignore
                         }
                     }
@@ -384,13 +385,15 @@ fn draw(
                 for step in 0..=num_steps {
                     let alpha = step as f32 / num_steps as f32;
                     let dv = previous_pos.lerp(mouse_pos, alpha);
-                    fill_pixel(dv);
+                    fill_pixel(dv, false);
                 }
                 *total_length += d;
             } else {
-                fill_pixel(mouse_pos);
                 if *previous_pos != Vec2::ZERO {
+                    fill_pixel(mouse_pos, false);
                     *total_length += previous_pos.distance(mouse_pos);
+                } else {
+                    fill_pixel(mouse_pos, true);
                 }
             }
 
