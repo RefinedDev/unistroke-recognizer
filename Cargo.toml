@@ -14,3 +14,4 @@ opt-level = 3
 [dependencies]
 bevy = { version = "0.15.1", features = ["dynamic_linking", "bevy_dev_tools"] }
 bevy_simple_text_input = "0.10.2"
+chrono = { version = "0.4.40", features = ["wasmbind"] }

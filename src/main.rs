@@ -1,7 +1,6 @@
 mod templates;
 use std::collections::HashMap;
 use std::f32::consts::PI;
-use std::time::Instant;
 
 use bevy::dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin};
 use bevy::input::mouse::{AccumulatedMouseMotion, MouseButtonInput};
@@ -11,6 +10,7 @@ use bevy::render::{
     render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 use bevy_simple_text_input::{TextInput, TextInputPlugin, TextInputSubmitEvent, TextInputTextFont};
+use chrono::Utc;
 
 const BRUSH_ENABLED: bool = true; // DISABLE FOR BETTER PERFORMANCE SINCE THEN IT DOES NOT HAVE TO DO 360*BRUSH_THICKNESS ITERATIONS
 const BRUSH_THICKNESS: u32 = 3;
@@ -331,7 +331,7 @@ fn draw(
                 reset_board(window.size(), board, true);
             } else if m1held.0 == true && button_event.state.is_pressed() == false {
                 // stopped drawing
-                let now = Instant::now();
+                let start_time = Utc::now();
 
                 let mut resampled_points = resample(*total_length, &candidate_points);
                 rotate_about_centroid(&mut resampled_points);
@@ -339,12 +339,13 @@ fn draw(
 
                 let (shape, _least_path_squared) = recognize(&resampled_points, custom_templates);
 
-                let elapsed_time = now.elapsed();
+                let end_time = Utc::now();
+                let elapsed_time = end_time.signed_duration_since(start_time);
                 result_text.0 = format!(
                     "{}\n{}.{} milliseconds",
                     shape,
-                    elapsed_time.as_millis(),
-                    elapsed_time.as_micros()
+                    elapsed_time.num_milliseconds(),
+                    elapsed_time.num_microseconds().get_or_insert_default()
                 );
                 final_resampled_points.0 = resampled_points;
             }
