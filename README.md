@@ -7,3 +7,7 @@ To fix that I have added custom gesture addition, if the shape such as a clockwi
 Also this algorithm does not work for horizontal/vertical lines as the scaling causes some issues, I could manually check for collinearity of the points and just call it a line but that is not fun right?<br>
 
 I will also code the more accurate [$P Point-Cloud Recognizer](https://depts.washington.edu/acelab/proj/dollar/pdollar.html) which enables multi-stroke gestures and is way more accurate also.
+
+# Default Templates
+
+https://depts.washington.edu/acelab/proj/dollar/unistrokes.gif
