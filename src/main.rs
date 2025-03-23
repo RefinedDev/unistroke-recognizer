@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::f32::consts::PI;
 
 use bevy::dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin};
-use bevy::input::mouse::{AccumulatedMouseMotion, MouseButtonInput};
 use bevy::prelude::*;
 use bevy::render::{
     render_asset::RenderAssetUsages,
@@ -12,7 +11,6 @@ use bevy::render::{
 use bevy_simple_text_input::{TextInput, TextInputPlugin, TextInputSubmitEvent, TextInputTextFont};
 use chrono::Utc;
 
-const BRUSH_ENABLED: bool = true; // DISABLE FOR BETTER PERFORMANCE SINCE THEN IT DOES NOT HAVE TO DO 360*BRUSH_THICKNESS ITERATIONS
 const BRUSH_THICKNESS: u32 = 3;
 const BRUSH_COLOR: Color = Color::linear_rgb(255.0, 255.0, 255.0);
 const BOARD_COLOR: Color = Color::linear_rgb(0.0, 0.0, 0.0);
@@ -33,8 +31,19 @@ struct StrokeTemplates(HashMap<String, Vec<Vec2>>);
 #[derive(Component)]
 struct ResultText;
 
-#[derive(Default)]
-struct M1Held(bool);
+#[derive(PartialEq)]
+enum DrawMoment {
+    Idle,
+    InputEnded,
+    InputBegan(Vec2),
+    Held(Vec2),
+}
+
+#[derive(Resource)]
+struct DrawState(DrawMoment);
+
+#[derive(Resource)]
+struct BrushEnabled(bool); // DISABLE FOR BETTER PERFORMANCE SINCE THEN IT DOES NOT HAVE TO DO 360*BRUSH_THICKNESS ITERATIONS
 
 fn resample(total_length: f32, candidate_points: &Vec<Vec2>) -> Vec<Vec2> {
     let mut resampled_points = Vec::with_capacity(RESAMPLE_TARGET_POINTS);
@@ -230,13 +239,51 @@ fn main() {
         .add_systems(Startup, (setup_window, spawn))
         .add_systems(
             Update,
-            (draw, handle_adding_gestures, textbox_input_listener).chain(),
+            (draw_state_handler, draw, handle_adding_gestures, textbox_input_listener, toggle_brush).chain(),
         )
         .insert_resource(IsTyping(false))
         .insert_resource(ResampledPoints(Vec::new()))
         .insert_resource(StrokeTemplates(templates::stroke_templates()))
+        .insert_resource(DrawState(DrawMoment::Idle))
+        .insert_resource(BrushEnabled(true))
         // .insert_resource(M1Held(false))
         .run();
+}
+
+fn toggle_brush(mut brush_enabled: ResMut<BrushEnabled>, keyboard_input: Res<ButtonInput<KeyCode>>,) {
+    if keyboard_input.just_pressed(KeyCode::ShiftLeft) {
+        brush_enabled.0 = !brush_enabled.0;
+    }
+}
+
+fn draw_state_handler(
+    buttons: Res<ButtonInput<MouseButton>>,
+    touches: Res<Touches>,
+    mut draw_state: ResMut<DrawState>,
+    window: Single<&Window>,
+) {
+    if buttons.just_pressed(MouseButton::Left) {
+        if let Some(x) = window.cursor_position() {
+            draw_state.0 = DrawMoment::InputBegan(x);
+        }
+    } else if buttons.pressed(MouseButton::Left) {
+        if let Some(x) = window.cursor_position() {
+            draw_state.0 = DrawMoment::Held(x);
+        }
+    } else {
+        for touch in touches.iter() {
+            if touches.just_pressed(touch.id()) {
+                draw_state.0 = DrawMoment::InputBegan(touch.position());
+            } else {
+                draw_state.0 = DrawMoment::Held(touch.position());
+            }
+            break;
+        }
+    }
+
+    if buttons.just_released(MouseButton::Left) || touches.any_just_released() {
+        draw_state.0 = DrawMoment::InputEnded;
+    }
 }
 
 fn handle_adding_gestures(
@@ -297,6 +344,27 @@ fn textbox_input_listener(
     }
 }
 
+fn fill_pixel(board: &mut Image, vec: Vec2, first_pixel: bool, brush_enabled: bool) {
+    let thickness = if first_pixel { BRUSH_THICKNESS*2 } else { BRUSH_THICKNESS };
+    if brush_enabled {
+        for theta in 0..=360 {
+            for delta_r in 0..=thickness {
+                let x =
+                    vec.x + (delta_r as f32) * ops::cos((theta as f32).to_radians());
+                let y =
+                    vec.y + (delta_r as f32) * ops::sin((theta as f32).to_radians());
+                board
+                    .set_color_at(x as u32, y as u32, BRUSH_COLOR)
+                    .unwrap_or(()); // most likely the error would be an out_of_bounds so it i think im okay to ignore
+            }
+        }
+    } else {
+        board
+            .set_color_at(vec.x as u32, vec.y as u32, BRUSH_COLOR)
+            .unwrap_or(()); // most likely the error would be an out_of_bounds so it i think im okay to ignore
+    }
+}
+
 fn draw(
     mut result_text: Single<&mut Text, With<ResultText>>,
     drawingboard: Res<DrawingBoard>,
@@ -308,98 +376,63 @@ fn draw(
     custom_templates: Res<StrokeTemplates>,
     mut final_resampled_points: ResMut<ResampledPoints>,
     mut previous_pos: Local<Vec2>,
-    mut m1held: Local<M1Held>,
     mut candidate_points: Local<Vec<Vec2>>,
     mut total_length: Local<f32>,
 
-    mouse_delta: Res<AccumulatedMouseMotion>,
-    mut button_events: EventReader<MouseButtonInput>,
+    mut draw_state: ResMut<DrawState>,
+    brush_enabled: Res<BrushEnabled>
 ) {
     if is_typing.0 {
         return;
     }
-    for button_event in button_events.read() {
-        if button_event.button == MouseButton::Left {
-            if m1held.0 == false && button_event.state.is_pressed() == true {
-                // started drawing so clear stuff
-                candidate_points.clear();
-                *total_length = 0.0;
-                *previous_pos = Vec2::ZERO;
-                result_text.0 = "".to_string();
+    if let DrawMoment::InputBegan(mouse_pos) = draw_state.0 {
+        candidate_points.clear();
+        *total_length = 0.0;
+        result_text.0 = "".to_string();
 
-                let board = images.get_mut(&drawingboard.0).expect("Board not found!!");
-                reset_board(window.size(), board, true);
-            } else if m1held.0 == true && button_event.state.is_pressed() == false {
-                // stopped drawing
-                let start_time = Utc::now();
+        let board = images.get_mut(&drawingboard.0).expect("Board not found!!");
+        reset_board(window.size(), board, true);
 
-                let mut resampled_points = resample(*total_length, &candidate_points);
-                rotate_about_centroid(&mut resampled_points);
-                scale_and_translate(&mut resampled_points);
+        fill_pixel(board, mouse_pos, true, brush_enabled.0);
+        *previous_pos = mouse_pos;
+        candidate_points.push(mouse_pos);
+    } else if draw_state.0 == DrawMoment::InputEnded {
+        let start_time = Utc::now();
 
-                let (shape, _least_path_squared) = recognize(&resampled_points, custom_templates);
+        let mut resampled_points = resample(*total_length, &candidate_points);
+        rotate_about_centroid(&mut resampled_points);
+        scale_and_translate(&mut resampled_points);
+      
+        let (shape, _least_path_squared) = recognize(&resampled_points, custom_templates);
 
-                let end_time = Utc::now();
-                let elapsed_time = end_time.signed_duration_since(start_time);
-                result_text.0 = format!(
-                    "{}\n{}.{} milliseconds",
-                    shape,
-                    elapsed_time.num_milliseconds(),
-                    elapsed_time.num_microseconds().get_or_insert_default()
-                );
-                final_resampled_points.0 = resampled_points;
+        let end_time = Utc::now();
+        let elapsed_time = end_time.signed_duration_since(start_time);
+        result_text.0 = format!(
+            "{}\n{}.{} milliseconds",
+            shape,
+            elapsed_time.num_milliseconds(),
+            elapsed_time.num_microseconds().get_or_insert_default()
+        );
+        final_resampled_points.0 = resampled_points;
+        draw_state.0 = DrawMoment::Idle;
+    } else if let DrawMoment::Held(mouse_pos) = draw_state.0 {
+        let board = images.get_mut(&drawingboard.0).expect("Board not found!!");
+        let delta = previous_pos.distance(mouse_pos);
+
+        if delta > 6.0 {
+            let num_steps = (delta / BRUSH_THICKNESS as f32).ceil() as u32;
+            for step in 0..=num_steps {
+                let alpha = step as f32 / num_steps as f32;
+                let dv = previous_pos.lerp(mouse_pos, alpha);
+                fill_pixel(board, dv, false, brush_enabled.0);
             }
-
-            *m1held = M1Held(button_event.state.is_pressed());
-            break;
+        } else {
+            fill_pixel(board, mouse_pos, false, brush_enabled.0);
         }
-    }
 
-    if m1held.0 {
-        if let Some(mouse_pos) = window.cursor_position() {
-            let mut fill_pixel = |vec: Vec2, first: bool| {
-                let board = images.get_mut(&drawingboard.0).expect("Board not found!!");
-                let thickness = if first { BRUSH_THICKNESS*2 } else { BRUSH_THICKNESS };
-                if BRUSH_ENABLED {
-                    for theta in 0..=360 {
-                        for delta_r in 0..=thickness {
-                            let x =
-                                vec.x + (delta_r as f32) * ops::cos((theta as f32).to_radians());
-                            let y =
-                                vec.y + (delta_r as f32) * ops::sin((theta as f32).to_radians());
-                            board
-                                .set_color_at(x as u32, y as u32, BRUSH_COLOR)
-                                .unwrap_or(()); // most likely the error would be an out_of_bounds so it i think im okay to ignore
-                        }
-                    }
-                } else {
-                    board
-                        .set_color_at(vec.x as u32, vec.y as u32, BRUSH_COLOR)
-                        .unwrap_or(()); // most likely the error would be an out_of_bounds so it i think im okay to ignore
-                }
-            };
-
-            if mouse_delta.delta.length_squared() > 36.0 && *previous_pos != Vec2::ZERO {
-                let d = previous_pos.distance(mouse_pos);
-                let num_steps = (d / BRUSH_THICKNESS as f32).ceil() as u32;
-                for step in 0..=num_steps {
-                    let alpha = step as f32 / num_steps as f32;
-                    let dv = previous_pos.lerp(mouse_pos, alpha);
-                    fill_pixel(dv, false);
-                }
-                *total_length += d;
-            } else {
-                if *previous_pos != Vec2::ZERO {
-                    fill_pixel(mouse_pos, false);
-                    *total_length += previous_pos.distance(mouse_pos);
-                } else {
-                    fill_pixel(mouse_pos, true);
-                }
-            }
-
-            candidate_points.push(mouse_pos);
-            *previous_pos = mouse_pos;
-        }
+        candidate_points.push(mouse_pos);
+        *total_length += delta;
+        *previous_pos = mouse_pos;
     }
 }
 fn spawn(window: Single<&Window>, mut commands: Commands, mut images: ResMut<Assets<Image>>) {
@@ -420,7 +453,7 @@ fn spawn(window: Single<&Window>, mut commands: Commands, mut images: ResMut<Ass
     ));
     commands.spawn((
         Text::new(
-            "Make strokes on the canvas\nMisrecognized? Press SPACE to add unistroke as a gesture",
+            "Make strokes on the canvas\nMisrecognized? Press SPACE to add unistroke as a gesture\nLSHIFT to toggle Brush (has a toll on performance)",
         ),
         TextFont {
             font_size: 20.0,
