@@ -25,6 +25,9 @@ struct DrawingBoard(Handle<Image>);
 struct IsTyping(bool);
 
 #[derive(Resource)]
+struct OverAButton(bool);
+
+#[derive(Resource)]
 struct ResampledPoints(Vec<Vec2>);
 #[derive(Resource)]
 struct StrokeTemplates(HashMap<String, HashSet<Template>>);
@@ -45,6 +48,12 @@ struct DrawState(DrawMoment);
 
 #[derive(Resource)]
 struct BrushEnabled(bool); // DISABLE FOR BETTER PERFORMANCE SINCE THEN IT DOES NOT HAVE TO DO 360*BRUSH_THICKNESS ITERATIONS
+
+#[derive(Component)]
+struct ToggleBrushButton;
+
+#[derive(Component)]
+struct AddGestureButton;
 
 fn resample(total_length: f32, candidate_points: &Vec<Vec2>) -> Vec<Vec2> {
     let mut resampled_points = Vec::with_capacity(RESAMPLE_TARGET_POINTS);
@@ -143,7 +152,7 @@ fn recognize(points: &Vec<Vec2>, templates: Res<StrokeTemplates>) -> (String, f3
     
     for unistroke in templates.0.iter() {
         for template in unistroke.1.iter() {
-            let distance = distance_at_best_angle(points, template.0);
+            let distance = distance_at_best_angle(points, &template.0);
             if distance < nearest_distance_squared {
                 nearest_distance_squared = distance;
                 nearest_name = unistroke.0;
@@ -154,7 +163,7 @@ fn recognize(points: &Vec<Vec2>, templates: Res<StrokeTemplates>) -> (String, f3
     (nearest_name.to_string(), nearest_distance_squared)
 }
 
-fn distance_at_best_angle(points: &Vec<Vec2>, template_points: [Vec2; 64]) -> f32 {
+fn distance_at_best_angle(points: &Vec<Vec2>, template_points: &[Vec2; RESAMPLE_TARGET_POINTS]) -> f32 {
     // follows the golden-section search algorithm
     const DELTA_THETA: f32 = 0.03490658503; // 2 deg in rads
     const INVERSE_PHI: f32 = 0.61803398875;
@@ -185,7 +194,7 @@ fn distance_at_best_angle(points: &Vec<Vec2>, template_points: [Vec2; 64]) -> f3
     f32::min(f1, f2)
 }
 
-fn distance_at_angle(points: &Vec<Vec2>, template_points: [Vec2; 64], theta: f32) -> f32 {
+fn distance_at_angle(points: &Vec<Vec2>, template_points: &[Vec2; RESAMPLE_TARGET_POINTS], theta: f32) -> f32 {
     let mut rotated_points = Vec::with_capacity(points.len());
     let centroid = get_centroid(points);
     let cos = ops::cos(theta);
@@ -242,24 +251,40 @@ fn main() {
         .add_systems(Startup, (setup_window, spawn))
         .add_systems(
             Update,
-            (draw_state_handler, draw, handle_adding_gestures, textbox_input_listener, toggle_brush).chain(),
+            (toggle_brush, handle_adding_gestures, draw_state_handler, draw, textbox_input_listener).chain(),
         )
         .insert_resource(IsTyping(false))
+        .insert_resource(OverAButton(false))
         .insert_resource(ResampledPoints(Vec::new()))
         .insert_resource(StrokeTemplates(templates::stroke_templates()))
         .insert_resource(DrawState(DrawMoment::Idle))
         .insert_resource(BrushEnabled(true))
-        // .insert_resource(M1Held(false))
         .run();
 }
 
 fn toggle_brush(
     mut brush_enabled: ResMut<BrushEnabled>,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
-    is_typing: Res<IsTyping>
+    mut interaction_query: Query<
+        (
+            &Interaction,
+            &mut BorderColor,
+        ),
+        (Changed<Interaction>, With<ToggleBrushButton>),
+    >,
+    mut text: Single<&mut Text, With<ToggleBrushButton>>,
 ) {
-    if keyboard_input.just_pressed(KeyCode::ShiftLeft) && !is_typing.0 {
-        brush_enabled.0 = !brush_enabled.0;
+    for (interaction, mut border_color) in &mut interaction_query {
+        match *interaction {
+            Interaction::Pressed => {
+                brush_enabled.0 = !brush_enabled.0;
+                border_color.0 = bevy::color::palettes::css::LIGHT_GREEN.into();
+                text.0 = if brush_enabled.0 { format!("ON") } else { format!("OFF") };
+            }
+            _ => {
+                text.0 = format!("Toggle Brush");
+                border_color.0 = Color::WHITE;
+            }
+        }
     }
 }
 
@@ -296,36 +321,54 @@ fn draw_state_handler(
 fn handle_adding_gestures(
     mut commands: Commands,
     mut typing: ResMut<IsTyping>,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut over_button: ResMut<OverAButton>,
+    mut interaction_query: Query<
+        (
+            &Interaction,
+            &mut BorderColor,
+        ),
+        (Changed<Interaction>, With<AddGestureButton>),
+    >,
     result_text: Single<&Text, With<ResultText>>,
 ) {
-    if keyboard_input.just_pressed(KeyCode::Space) && !result_text.0.is_empty() && !typing.0 {
-        typing.0 = true;
-        commands
-            .spawn(Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                bottom: Val::Px(300.0),
-                ..default()
-            })
-            .with_children(|parent| {
-                parent.spawn((
-                    Node {
-                        width: Val::Px(200.0),
-                        border: UiRect::all(Val::Px(5.0)),
-                        padding: UiRect::all(Val::Px(5.0)),
-                        ..default()
-                    },
-                    BorderColor(BRUSH_COLOR),
-                    TextInput,
-                    TextInputTextFont(TextFont {
-                        font_size: 34.,
-                        ..default()
-                    }),
-                ));
-            });
+    for (interaction, mut border_color) in &mut interaction_query {
+        match *interaction {
+            Interaction::Pressed => {
+                over_button.0 = true;
+                border_color.0 = bevy::color::palettes::css::LIGHT_GREEN.into();
+                if !result_text.0.is_empty() && !typing.0 {
+                    typing.0 = true;
+                    commands
+                        .spawn(Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Percent(100.0),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            bottom: Val::Px(300.0),
+                            ..default()
+                        })
+                        .with_children(|parent| {
+                            parent.spawn((
+                                Node {
+                                    width: Val::Px(200.0),
+                                    border: UiRect::all(Val::Px(5.0)),
+                                    padding: UiRect::all(Val::Px(5.0)),
+                                    ..default()
+                                },
+                                BorderColor(BRUSH_COLOR),
+                                TextInput,
+                                TextInputTextFont(TextFont {
+                                    font_size: 34.,
+                                    ..default()
+                                }),
+                            ));
+                        });
+                }
+            }
+            _ => {
+                border_color.0 = Color::WHITE;
+            }
+        }
     }
 }
 
@@ -339,16 +382,20 @@ fn textbox_input_listener(
 ) {
     for event in events.read() {
         let text = &event.value;
-
-        if let Some(set) = custom_templates.0.get_mut(text) {
-            set.insert(Template(resampled_points.0.to_owned().try_into().unwrap()));
+        
+        if resampled_points.0.len() == RESAMPLE_TARGET_POINTS {
+            if let Some(set) = custom_templates.0.get_mut(text) {
+                set.insert(Template(resampled_points.0.to_owned().try_into().unwrap()));
+            } else {
+                custom_templates.0.insert(text.clone(), HashSet::from([Template(resampled_points.0.to_owned().try_into().unwrap())]));
+            }
+            result_text.0 = format!("{} gesture added!", text);
         } else {
-            custom_templates.0.insert(text.clone(), HashSet::from([Template(resampled_points.0.to_owned().try_into().unwrap())]));
+            result_text.0 = format!("Gesture drawn has too little resampled points (< {})", RESAMPLE_TARGET_POINTS);
         }
-
+        
         typing.0 = false;
         commands.entity(event.entity).despawn();
-        result_text.0 = format!("{} gesture added!", text);
     }
 }
 
@@ -379,6 +426,7 @@ fn draw(
     window: Single<&Window>,
 
     is_typing: Res<IsTyping>,
+    mut over_button: ResMut<OverAButton>,
     custom_templates: Res<StrokeTemplates>,
     mut final_resampled_points: ResMut<ResampledPoints>,
     mut previous_pos: Local<Vec2>,
@@ -388,7 +436,9 @@ fn draw(
     mut draw_state: ResMut<DrawState>,
     brush_enabled: Res<BrushEnabled>,
 ) {
-    if is_typing.0 {
+    if is_typing.0 || over_button.0 {
+        draw_state.0 = DrawMoment::Idle;
+        over_button.0 = false;
         return;
     }
     if let DrawMoment::InputBegan(mouse_pos) = draw_state.0 {
@@ -458,7 +508,7 @@ fn spawn(window: Single<&Window>, mut commands: Commands, mut images: ResMut<Ass
     ));
     commands.spawn((
         Text::new(
-            "Make strokes on the canvas\nMisrecognized? Press SPACE to add unistroke as a gesture\nLSHIFT to toggle Brush (has a toll on performance)",
+            "Misrecognized? 'Add' stroke as a gesture\n\n\n'Toggle Brush' for performance",
         ),
         TextFont {
             font_size: 20.0,
@@ -467,10 +517,80 @@ fn spawn(window: Single<&Window>, mut commands: Commands, mut images: ResMut<Ass
         TextColor(Color::linear_rgb(0.0, 255.0, 0.0)),
         Node {
             position_type: PositionType::Absolute,
-            bottom: Val::Px(0.0),
+            bottom: Val::Px(30.0),
+            left: Val::Px(150.0),
             ..default()
         },
     ));
+    
+    commands
+        .spawn(Node {
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            align_items: AlignItems::End,
+            ..default()
+        })
+        .with_children(|parent| {
+            parent
+                .spawn((
+                    Button,
+                    Node {
+                        width: Val::Px(140.0),
+                        height: Val::Px(65.0),
+                        border: UiRect::all(Val::Px(3.0)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BorderColor(Color::WHITE),
+                    BorderRadius::MAX,
+                    BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
+                    ToggleBrushButton
+                ))
+                .with_child((
+                    Text::new("Toggle Brush"),
+                    TextFont {
+                        font_size: 17.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.9, 0.9, 0.9)),
+                    ToggleBrushButton
+                ));
+        });
+    commands
+        .spawn(Node {
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            align_items: AlignItems::End,
+            bottom: Val::Px(80.0),
+            ..default()
+        })
+        .with_children(|parent| {
+            parent
+                .spawn((
+                    Button,
+                    Node {
+                        width: Val::Px(140.0),
+                        height: Val::Px(65.0),
+                        border: UiRect::all(Val::Px(3.0)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BorderColor(Color::WHITE),
+                    BorderRadius::MAX,
+                    BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
+                    AddGestureButton
+                ))
+                .with_child((
+                    Text::new("Add"),
+                    TextFont {
+                        font_size: 17.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.9, 0.9, 0.9)),
+                ));
+        });
     let image = Image::new_fill(
         Extent3d {
             width: window.size().x as u32,
