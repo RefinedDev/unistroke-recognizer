@@ -1,5 +1,5 @@
 mod templates;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::f32::consts::PI;
 
 use bevy::dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin};
@@ -10,6 +10,7 @@ use bevy::render::{
 };
 use bevy_simple_text_input::{TextInput, TextInputPlugin, TextInputSubmitEvent, TextInputTextFont};
 use chrono::Utc;
+use templates::Template;
 
 const BRUSH_THICKNESS: u32 = 3;
 const BRUSH_COLOR: Color = Color::linear_rgb(255.0, 255.0, 255.0);
@@ -26,7 +27,7 @@ struct IsTyping(bool);
 #[derive(Resource)]
 struct ResampledPoints(Vec<Vec2>);
 #[derive(Resource)]
-struct StrokeTemplates(HashMap<String, Vec<Vec2>>);
+struct StrokeTemplates(HashMap<String, HashSet<Template>>);
 
 #[derive(Component)]
 struct ResultText;
@@ -140,18 +141,20 @@ fn recognize(points: &Vec<Vec2>, templates: Res<StrokeTemplates>) -> (String, f3
     let mut nearest_distance_squared = f32::MAX;
     let mut nearest_name = "not recognized";
     
-    for template in templates.0.iter() {
-        let distance = distance_at_best_angle(points, template.1);
-        if distance < nearest_distance_squared {
-            nearest_distance_squared = distance;
-            nearest_name = template.0;
+    for unistroke in templates.0.iter() {
+        for template in unistroke.1.iter() {
+            let distance = distance_at_best_angle(points, template.0);
+            if distance < nearest_distance_squared {
+                nearest_distance_squared = distance;
+                nearest_name = unistroke.0;
+            }
         }
     }
 
     (nearest_name.to_string(), nearest_distance_squared)
 }
 
-fn distance_at_best_angle(points: &Vec<Vec2>, template_points: &Vec<Vec2>) -> f32 {
+fn distance_at_best_angle(points: &Vec<Vec2>, template_points: [Vec2; 64]) -> f32 {
     // follows the golden-section search algorithm
     const DELTA_THETA: f32 = 0.03490658503; // 2 deg in rads
     const INVERSE_PHI: f32 = 0.61803398875;
@@ -182,7 +185,7 @@ fn distance_at_best_angle(points: &Vec<Vec2>, template_points: &Vec<Vec2>) -> f3
     f32::min(f1, f2)
 }
 
-fn distance_at_angle(points: &Vec<Vec2>, template_points: &Vec<Vec2>, theta: f32) -> f32 {
+fn distance_at_angle(points: &Vec<Vec2>, template_points: [Vec2; 64], theta: f32) -> f32 {
     let mut rotated_points = Vec::with_capacity(points.len());
     let centroid = get_centroid(points);
     let cos = ops::cos(theta);
@@ -250,8 +253,12 @@ fn main() {
         .run();
 }
 
-fn toggle_brush(mut brush_enabled: ResMut<BrushEnabled>, keyboard_input: Res<ButtonInput<KeyCode>>,) {
-    if keyboard_input.just_pressed(KeyCode::ShiftLeft) {
+fn toggle_brush(
+    mut brush_enabled: ResMut<BrushEnabled>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    is_typing: Res<IsTyping>
+) {
+    if keyboard_input.just_pressed(KeyCode::ShiftLeft) && !is_typing.0 {
         brush_enabled.0 = !brush_enabled.0;
     }
 }
@@ -333,14 +340,15 @@ fn textbox_input_listener(
     for event in events.read() {
         let text = &event.value;
 
-        if let Some(_) = custom_templates.0.get(text) {
-            result_text.0 = format!("{} gesture already exists!\nI suggest adding a number as a suffix", text);
+        if let Some(set) = custom_templates.0.get_mut(text) {
+            set.insert(Template(resampled_points.0.to_owned().try_into().unwrap()));
         } else {
-            result_text.0 = format!("{} gesture added!", text);
-            custom_templates.0.insert(text.clone(), resampled_points.0.clone());
-            typing.0 = false;
-            commands.entity(event.entity).despawn();
+            custom_templates.0.insert(text.clone(), HashSet::from([Template(resampled_points.0.to_owned().try_into().unwrap())]));
         }
+
+        typing.0 = false;
+        commands.entity(event.entity).despawn();
+        result_text.0 = format!("{} gesture added!", text);
     }
 }
 
@@ -349,10 +357,8 @@ fn fill_pixel(board: &mut Image, vec: Vec2, first_pixel: bool, brush_enabled: bo
     if brush_enabled {
         for theta in 0..=360 {
             for delta_r in 0..=thickness {
-                let x =
-                    vec.x + (delta_r as f32) * ops::cos((theta as f32).to_radians());
-                let y =
-                    vec.y + (delta_r as f32) * ops::sin((theta as f32).to_radians());
+                let x = vec.x + (delta_r as f32) * ops::cos((theta as f32).to_radians());
+                let y = vec.y + (delta_r as f32) * ops::sin((theta as f32).to_radians());
                 board
                     .set_color_at(x as u32, y as u32, BRUSH_COLOR)
                     .unwrap_or(()); // most likely the error would be an out_of_bounds so it i think im okay to ignore
@@ -380,7 +386,7 @@ fn draw(
     mut total_length: Local<f32>,
 
     mut draw_state: ResMut<DrawState>,
-    brush_enabled: Res<BrushEnabled>
+    brush_enabled: Res<BrushEnabled>,
 ) {
     if is_typing.0 {
         return;
@@ -402,7 +408,6 @@ fn draw(
         let mut resampled_points = resample(*total_length, &candidate_points);
         rotate_about_centroid(&mut resampled_points);
         scale_and_translate(&mut resampled_points);
-      
         let (shape, _least_path_squared) = recognize(&resampled_points, custom_templates);
 
         let end_time = Utc::now();

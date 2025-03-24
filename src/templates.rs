@@ -2,12 +2,32 @@
 // we calculate the distance with the nth index of the template and the drawn shape
 // since the shapes are resampled to 64 pixels so are these templates
 
-use std::collections::HashMap;
+use std::{collections::{HashMap, HashSet}, hash::Hash};
 use bevy::math::Vec2;
 
-pub fn stroke_templates() -> HashMap<String, Vec<Vec2>> {
+const SIZE: usize = 64;
+pub struct Template(pub [Vec2; SIZE]);
+
+impl PartialEq for Template {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.iter().zip(other.0.iter()).all(|(x,y)| x == y)
+    }
+}
+
+impl Eq for Template {}
+
+impl Hash for Template {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        for element in &self.0 {
+            element.x.to_bits().hash(state);
+            element.y.to_bits().hash(state);
+        }
+    }
+}
+
+pub fn stroke_templates() -> HashMap<String, HashSet<Template>> {
     let mut h = HashMap::new();
-    h.insert(String::from("Triangle"), vec![
+    h.insert(String::from("Triangle"), HashSet::from([Template([
         Vec2::new(66.62665, -4.5776367e-5),
         Vec2::new(61.4805, -1.5734406),
         Vec2::new(56.128845, -3.1351013),
@@ -72,8 +92,8 @@ pub fn stroke_templates() -> HashMap<String, Vec<Vec2>> {
         Vec2::new(54.777466, 8.305862),
         Vec2::new(59.699036, 5.968521),
         Vec2::new(64.58249, 3.5591125),
-    ]);
-    h.insert(String::from("Circle"), vec![
+    ])]));
+    h.insert(String::from("Circle"), HashSet::from([Template([
         Vec2::new(44.340607, -7.6293945e-5),
         Vec2::new(46.803467, -3.9438019),
         Vec2::new(46.515076, -8.88736),
@@ -138,8 +158,8 @@ pub fn stroke_templates() -> HashMap<String, Vec<Vec2>> {
         Vec2::new(48.278168, -6.361557),
         Vec2::new(47.989746, -11.305115),
         Vec2::new(47.372894, -16.190582),
-    ]);
-    h.insert(String::from("X"), vec![
+    ])]));
+    h.insert(String::from("X"), HashSet::from([Template([
         Vec2::new(55.426727, 7.6293945e-6),
         Vec2::new(50.719696, 0.09410858),
         Vec2::new(45.935944, -0.33444977),
@@ -204,8 +224,8 @@ pub fn stroke_templates() -> HashMap<String, Vec<Vec2>> {
         Vec2::new(24.105621, -45.209343),
         Vec2::new(25.344116, -48.91314),
         Vec2::new(26.374481, -52.66333),
-    ]);
-    h.insert(String::from("Rectangle"), vec![
+    ])]));
+    h.insert(String::from("Rectangle"), HashSet::from([Template([
         Vec2::new(49.165726, -3.8146973e-5),
         Vec2::new(46.848648, -4.061165),
         Vec2::new(44.531586, -8.122299),
@@ -270,8 +290,8 @@ pub fn stroke_templates() -> HashMap<String, Vec<Vec2>> {
         Vec2::new(40.2641, 11.335388),
         Vec2::new(43.75821, 8.543686),
         Vec2::new(47.44197, 5.9892426),
-    ]);
-    h.insert(String::from("Check"), vec![
+    ])]));
+    h.insert(String::from("Check"), HashSet::from([Template([
         Vec2::new(45.207275, 7.6293945e-5),
         Vec2::new(43.531677, -2.3918152),
         Vec2::new(41.9494, -4.9904785),
@@ -336,8 +356,8 @@ pub fn stroke_templates() -> HashMap<String, Vec<Vec2>> {
         Vec2::new(-51.06723, 49.28572),
         Vec2::new(-52.97744, 50.83139),
         Vec2::new(-54.792717, 52.777847),
-    ]);
-    h.insert(String::from("Caret"), vec![
+    ])]));
+    h.insert(String::from("Caret"), HashSet::from([Template([
         Vec2::new(68.49693, 0.0),
         Vec2::new(66.263535, 2.4131927),
         Vec2::new(63.605453, 4.4089203),
@@ -402,8 +422,8 @@ pub fn stroke_templates() -> HashMap<String, Vec<Vec2>> {
         Vec2::new(-17.081009, -62.47152),
         Vec2::new(-17.218582, -65.70145),
         Vec2::new(-17.363693, -68.93118),
-    ]);
-    h.insert(String::from("Zig-Zag"), vec![
+    ])]));
+    h.insert(String::from("Zig-Zag"), HashSet::from([Template([
         Vec2::new(51.137466, 0.0),
         Vec2::new(49.388718, 4.978821),
         Vec2::new(47.632797, 9.84082),
@@ -468,8 +488,8 @@ pub fn stroke_templates() -> HashMap<String, Vec<Vec2>> {
         Vec2::new(-45.375072, 2.1527405),
         Vec2::new(-47.09629, 7.347168),
         Vec2::new(-48.86254, 12.169312),
-    ]);
-    h.insert(String::from("Arrow"), vec![
+    ])]));
+    h.insert(String::from("Arrow"), HashSet::from([Template([
         Vec2::new(70.09819, -9.1552734e-5),
         Vec2::new(66.869644, -0.69758606),
         Vec2::new(63.579514, -0.5935669),
@@ -534,8 +554,8 @@ pub fn stroke_templates() -> HashMap<String, Vec<Vec2>> {
         Vec2::new(-21.039139, -48.73639),
         Vec2::new(-19.819504, -54.293953),
         Vec2::new(-18.5999, -59.851524),
-    ]);
-    h.insert(String::from("Left Square Bracket"), vec![
+    ])]));
+    h.insert(String::from("Left Square Bracket"), HashSet::from([Template([
         Vec2::new(58.312958, -1.5258789e-5),
         Vec2::new(56.89264, -2.7177582),
         Vec2::new(54.830017, -5.089432),
@@ -600,8 +620,8 @@ pub fn stroke_templates() -> HashMap<String, Vec<Vec2>> {
         Vec2::new(-9.508713, 55.02452),
         Vec2::new(-7.9244385, 57.723694),
         Vec2::new(-6.0291595, 60.19983),    
-    ]);
-    h.insert(String::from("Right Square Bracket"), vec![
+    ])]));
+    h.insert(String::from("Right Square Bracket"), HashSet::from([Template([
         Vec2::new(58.192993, 0.0),
         Vec2::new(55.961792, 2.0500946),
         Vec2::new(53.63965, 3.9964447),
@@ -666,8 +686,8 @@ pub fn stroke_templates() -> HashMap<String, Vec<Vec2>> {
         Vec2::new(-16.557892, -55.536186),
         Vec2::new(-14.596588, -57.94673),
         Vec2::new(-12.635315, -60.357307),
-    ]);
-    h.insert(String::from("V"), vec![
+    ])]));
+    h.insert(String::from("V"), HashSet::from([Template([
         Vec2::new(71.28351, -3.0517578e-5),
         Vec2::new(68.06894, -1.0181732),
         Vec2::new(64.60895, -1.4554749),
@@ -732,8 +752,8 @@ pub fn stroke_templates() -> HashMap<String, Vec<Vec2>> {
         Vec2::new(-15.789856, 58.295944),
         Vec2::new(-15.481873, 61.43495),
         Vec2::new(-14.279724, 64.41675),
-    ]);
-    h.insert(String::from("Delete"), vec![
+    ])]));
+    h.insert(String::from("Delete"), HashSet::from([Template([
         Vec2::new(58.043304, 0.0),
         Vec2::new(53.659912, 1.0546875),
         Vec2::new(49.262787, 2.028717),
@@ -798,8 +818,8 @@ pub fn stroke_templates() -> HashMap<String, Vec<Vec2>> {
         Vec2::new(37.362793, 40.484604),
         Vec2::new(39.644653, 44.877487),
         Vec2::new(42.017944, 49.167984),
-    ]);
-    h.insert(String::from("Left Curly Bracket"), vec![
+    ])]));
+    h.insert(String::from("Left Curly Bracket"), HashSet::from([Template([
         Vec2::new(53.067596, 1.5258789e-5),
         Vec2::new(52.66304, -4.8795013),
         Vec2::new(52.258514, -9.759048),
@@ -864,8 +884,8 @@ pub fn stroke_templates() -> HashMap<String, Vec<Vec2>> {
         Vec2::new(-44.664467, 56.720398),
         Vec2::new(-44.259933, 61.599976),
         Vec2::new(-43.855392, 66.47949),
-    ]);
-    h.insert(String::from("Right Curly Bracket"), vec![
+    ])]));
+    h.insert(String::from("Right Curly Bracket"), HashSet::from([Template([
         Vec2::new(56.633347, 0.0),
         Vec2::new(55.603653, 3.972107),
         Vec2::new(54.57396, 7.9441986),
@@ -930,8 +950,8 @@ pub fn stroke_templates() -> HashMap<String, Vec<Vec2>> {
         Vec2::new(-39.515213, -58.55883),
         Vec2::new(-39.347244, -62.543694),
         Vec2::new(-39.60327, -66.06149),
-    ]);
-    h.insert(String::from("Star"), vec![
+    ])]));
+    h.insert(String::from("Star"), HashSet::from([Template([
         Vec2::new(55.735703, 0.0),
         Vec2::new(48.909393, 3.4066467),
         Vec2::new(41.459656, 5.1355133),
@@ -996,8 +1016,8 @@ pub fn stroke_templates() -> HashMap<String, Vec<Vec2>> {
         Vec2::new(35.55681, -4.545227),
         Vec2::new(43.09526, -4.7387695),
         Vec2::new(50.43518, -3.9717102),
-    ]);
-    h.insert(String::from("Pigtail"), vec![
+    ])]));
+    h.insert(String::from("Pigtail"), HashSet::from([Template([
         Vec2::new(66.00748, -7.6293945e-6),
         Vec2::new(63.467392, -3.2673187),
         Vec2::new(59.7836, -5.73201),
@@ -1062,6 +1082,6 @@ pub fn stroke_templates() -> HashMap<String, Vec<Vec2>> {
         Vec2::new(-25.625061, -48.974678),
         Vec2::new(-29.515167, -51.149437),
         Vec2::new(-33.389923, -53.337708),
-    ]);
+    ])]));
     h
 }
