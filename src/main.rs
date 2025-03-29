@@ -291,6 +291,7 @@ fn toggle_brush(
 fn draw_state_handler(
     buttons: Res<ButtonInput<MouseButton>>,
     touches: Res<Touches>,
+    mouse_move_delta: Res<bevy::input::mouse::AccumulatedMouseMotion>,
     mut draw_state: ResMut<DrawState>,
     window: Single<&Window>,
 ) {
@@ -298,7 +299,7 @@ fn draw_state_handler(
         if let Some(x) = window.cursor_position() {
             draw_state.0 = DrawMoment::InputBegan(x);
         }
-    } else if buttons.pressed(MouseButton::Left) {
+    } else if buttons.pressed(MouseButton::Left) && mouse_move_delta.delta != Vec2::ZERO {
         if let Some(x) = window.cursor_position() {
             draw_state.0 = DrawMoment::Held(x);
         }
@@ -306,7 +307,7 @@ fn draw_state_handler(
         for touch in touches.iter() {
             if touches.just_pressed(touch.id()) {
                 draw_state.0 = DrawMoment::InputBegan(touch.position());
-            } else {
+            } else if touch.delta() != Vec2::ZERO {
                 draw_state.0 = DrawMoment::Held(touch.position());
             }
             break;
