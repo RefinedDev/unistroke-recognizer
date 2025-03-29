@@ -304,6 +304,8 @@ fn draw_state_handler(
             draw_state.0 = DrawMoment::Held(x);
         }
     } else {
+        draw_state.0 = DrawMoment::Idle;
+        
         for touch in touches.iter() {
             if touches.just_pressed(touch.id()) {
                 draw_state.0 = DrawMoment::InputBegan(touch.position());
