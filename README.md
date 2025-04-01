@@ -1,4 +1,8 @@
-# Default Templates
+# Better Version
+
+[This version](https://github.com/RefinedDev/stroke-recognizer) has multistroke recognition and also resolves the issues mentioned below
+
+## Default Templates
 
 <img align="center" width="300" src="default_templates.png" />
 
@@ -12,5 +16,3 @@ To fix that I have added custom gesture addition, if the shape such as a clockwi
 Also this algorithm does not work for horizontal/vertical lines as the scaling causes some issues, I could manually check for collinearity of the points and just call it a line but that is not fun right?<br>
 
 *PS: I am pretty sure the milliseconds shower in the web build is inaccurate; I am not really sure why but I think it is related to wasm-unknown-unknown not having access to the standard library*
-
-I will also code the more accurate [$P Point-Cloud Recognizer](https://depts.washington.edu/acelab/proj/dollar/pdollar.html) which enables multi-stroke gestures and is way more accurate also.
